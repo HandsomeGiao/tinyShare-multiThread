@@ -9,6 +9,7 @@
 #include<QTimer>
 #include<QDir>
 #include<QProgressDialog>
+#include<QCloseEvent>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -94,6 +95,16 @@ void MainWindow::on_pbSend_clicked()
     QThreadPool::globalInstance()->start(worker);
 }
 
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    if(QThreadPool::globalInstance()->activeThreadCount()){
+        event->ignore();
+        QMessageBox::warning(this,"等待子线程","等待所有子线程完成!");
+    }else{
+        event->accept();
+    }
+}
+
 ///////////////////////////////////////////
 ///////////////SendFileWorker/////////////
 /////////////////////////////////////////
@@ -118,23 +129,27 @@ void SendFileWorker::run()
     QEventLoop* loop = new QEventLoop;
     bool isFailed=false;
     //在出现错误时,会发送两次taskOver信号
-    QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop](){
+    //无法通过正常关闭窗口来中断连接,会导致僵尸线程.这里的中断可以通过系统强制关闭来实现
+    auto connDis = QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop](){
         emit signalsSrc.taskOver(false);
         qDebug()<<"client disconnect!";
         loop->quit();
+        loop->deleteLater();
         isFailed=true;
     });
-    QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,[this,&isFailed,loop](){
+    auto connErr = QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,[this,&isFailed,loop](){
         emit signalsSrc.taskOver(false);
         qDebug()<<"error occurred!";
         isFailed=true;
         loop->quit();
+        loop->deleteLater();
     });
 
     auto conn =QObject::connect(&socket,&QTcpSocket::connected,loop,&QEventLoop::quit);
     loop->exec();
-    if(isFailed)
+    if(isFailed){
         return;
+    }
     //qDebug()<<loop->isRunning();
     //qDebug()<<"connect success";
 
@@ -160,8 +175,9 @@ void SendFileWorker::run()
             loop->quit();
     });
     loop->exec();
-    if(isFailed)
+    if(isFailed){
         return;
+    }
     //删除该连接,否则后续传输还会调用该函数
     QObject::disconnect(conn);
 
@@ -172,18 +188,24 @@ void SendFileWorker::run()
     rstSize=totalSize=fileInfo.size();
     QTimer sendTimer;
     sendTimer.start(1);
-    QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop](){
-        QByteArray buffer=file.read(dataBlockSize);
-        socket.write(buffer);
+    QByteArray buffer;
+    QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop,&buffer](){
+        if(buffer.isEmpty())
+            buffer=file.read(dataBlockSize);
+        buffer = buffer.last(buffer.size()-socket.write(buffer));
         if(file.atEnd()){
             sendTimer.stop();
         }
     });
-    QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize](qint64 s){
+    QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize,&connDis,&connErr](qint64 s){
         rstSize -= s;
         emit signalsSrc.process((double)(totalSize-rstSize)/totalSize*100);
-        if(rstSize<=0)
-           loop->quit();
+        if(rstSize<=0){
+            //避免在传输完成后收到错误提示
+            QObject::disconnect(connDis);
+            QObject::disconnect(connErr);
+            loop->quit();
+        }
     });
     loop->exec();
     loop->deleteLater();
@@ -192,7 +214,7 @@ void SendFileWorker::run()
         return;
 
     //send file complete
-    qDebug()<<"run over success!";
+    //qDebug()<<"run over success!";
     file.close();
     socket.close();
     emit signalsSrc.taskOver(true);
@@ -228,16 +250,19 @@ void RecvFileWorker::run()
     QEventLoop* loop=new QEventLoop();
     bool isFailed=false;
     //在出现错误时,会发送两次taskOver信号
-    QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop](){
+    auto connDis = QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop](){
         emit signalsSrc.taskOver(false);
         qDebug()<<"client disconnect!";
         loop->quit();
+        loop->deleteLater();
         isFailed=true;
     });
-    QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,[this,&isFailed,loop](){
+
+    auto connErr = QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,[this,&isFailed,loop](){
         emit signalsSrc.taskOver(false);
         qDebug()<<"error occurred!";
         isFailed=true;
+        loop->deleteLater();
         loop->quit();
     });
 
@@ -270,13 +295,16 @@ void RecvFileWorker::run()
     }
 
     //send file
-    QObject::connect(&socket,&QTcpSocket::readyRead,loop,[&file,&rstSize,loop,&socket,this,totalSize](){
+    QObject::connect(&socket,&QTcpSocket::readyRead,loop,[&file,&rstSize,loop,&socket,this,totalSize,&connDis,&connErr](){
         QByteArray buffer=socket.readAll();
         rstSize -= buffer.size();
         file.write(buffer);
         emit signalsSrc.process((double)(totalSize-rstSize)/totalSize*100);
-        if(rstSize<=0)
+        if(rstSize<=0){
+            QObject::disconnect(connDis);
+            QObject::disconnect(connErr);
             loop->quit();
+        }
     });
 
     loop->exec();

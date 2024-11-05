@@ -99,6 +99,10 @@ private:
 
     // QWidget interface
 protected:
+
+    // QWidget interface
+protected:
+    virtual void closeEvent(QCloseEvent *event) override;
 };
 
 ////////////////////////////////////////////////////////////////////
