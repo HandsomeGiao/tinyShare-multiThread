@@ -17,7 +17,7 @@ class MainWindow;
 QT_END_NAMESPACE
 
 struct FileHeader{
-    char fileName[1024];
+    char releativeFileName[1024];
     quint64 fileSize;
 };
 
@@ -38,7 +38,7 @@ signals:
 class SendFileWorker : public QRunnable
 {
 public:
-    SendFileWorker(QString ip,int port,QString path);
+    SendFileWorker(QString ip,int port,QString path,QString releativePath = QString());
     ~SendFileWorker();
     void run() override;
     WorkerSignals signalsSrc;
@@ -46,6 +46,7 @@ private:
     QString ip;
     int port;
     QString filePath;
+    QString rootPath;
 
     quint64 readBufferSize=100*1024*1024;
     quint64 dataBlockSize=65536;
@@ -87,6 +88,7 @@ public:
     ~MainWindow();
 private:
     void getAllFiles(QStringList& allFiles,QString dirPath);
+    void sendFile(QString path,QString rootPath=QString());
 private slots:
     void do_taskEnd(bool s,QString info);
     void do_newClient(qintptr socketDescriptor);

@@ -53,6 +53,40 @@ void MainWindow::getAllFiles(QStringList &allFiles, QString dirPath)
     }
 }
 
+void MainWindow::sendFile(QString path,QString rootPath)
+{
+    //传入的是绝对路径
+    QFileInfo fileInfo(path);
+    SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path,rootPath);
+    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
+
+    QThreadPool::globalInstance()->start(worker);
+
+    QHBoxLayout* hl=new QHBoxLayout();
+    QProgressBar* bar=new QProgressBar(this);
+    auto btn = new QPushButton("取消传输",this);
+    bar->setFormat(QString("%1 : %p%").arg(fileInfo.fileName()));
+    connect(&(worker->signalsSrc),&WorkerSignals::process,bar,&QProgressBar::setValue);
+    connect(btn,&QPushButton::clicked,&(worker->signalsSrc),&WorkerSignals::forceEnd);
+    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,bar,[bar,hl,btn](bool s,QString info){
+        bar->setFormat(info);
+        btn->disconnect();
+        btn->setText("删除消息");
+        connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
+            bar->deleteLater();
+            btn->deleteLater();
+            hl->deleteLater();
+        });
+    });
+    //ui
+    hl->addWidget(bar);
+    hl->addWidget(btn);
+    hl->setStretchFactor(bar,1);
+    hl->setStretchFactor(btn,0);
+    layout->addLayout(hl);
+    bar->show();
+}
+
 void MainWindow::do_taskEnd(bool s,QString info)
 {
     //do nothing
@@ -76,7 +110,7 @@ void MainWindow::do_newFile(QString name, quint64 size)
     bar->setFormat(QString("%1 : %p%").arg(name));
     connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,bar,&QProgressBar::setValue);
     connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::taskOver,bar,[bar,hl,btn](bool s,QString info){
-        bar->setFormat(bar->format() + info);
+        bar->setFormat(info);
         btn->disconnect();
         btn->setText("删除消息");
         connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
@@ -91,6 +125,7 @@ void MainWindow::do_newFile(QString name, quint64 size)
     hl->setStretchFactor(btn,0);
     connect(btn,&QPushButton::clicked,qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::forceEnd);
     layout->addLayout(hl);
+    bar->show();
 }
 
 void MainWindow::on_pbListen_clicked()
@@ -116,34 +151,7 @@ void MainWindow::on_pbSend_clicked()
     QString path=QFileDialog::getOpenFileName(this,"选择文件",".","所有文件(*.*)");
     if(path.isEmpty())
         return;
-    QFileInfo fileInfo(path);
-    SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path);
-    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
-
-    QThreadPool::globalInstance()->start(worker);
-
-    QHBoxLayout* hl=new QHBoxLayout();
-    QProgressBar* bar=new QProgressBar(this);
-    auto btn = new QPushButton("取消传输",this);
-    bar->setFormat(QString("%1 : %p%").arg(fileInfo.fileName()));
-    connect(&(worker->signalsSrc),&WorkerSignals::process,bar,&QProgressBar::setValue);
-    connect(btn,&QPushButton::clicked,&(worker->signalsSrc),&WorkerSignals::forceEnd);
-    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,bar,[bar,hl,btn](bool s,QString info){
-        bar->setFormat(bar->format() + info);
-        btn->disconnect();
-        btn->setText("删除消息");
-        connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
-            bar->deleteLater();
-            btn->deleteLater();
-            hl->deleteLater();
-        });
-    });
-    //ui
-    hl->addWidget(bar);
-    hl->addWidget(btn);
-    hl->setStretchFactor(bar,1);
-    hl->setStretchFactor(btn,0);
-    layout->addLayout(hl);
+    sendFile(path);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -160,8 +168,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
 ///////////////SendFileWorker/////////////
 /////////////////////////////////////////
 
-SendFileWorker::SendFileWorker(QString _ip, int _port, QString _path)
-    :ip(_ip),port(_port),filePath(_path)
+SendFileWorker::SendFileWorker(QString _ip, int _port, QString _path,QString _releativePath)
+    :ip(_ip),port(_port),filePath(_path),rootPath(_releativePath)
 {
 
 }
@@ -184,6 +192,9 @@ void SendFileWorker::run()
 
     QTcpSocket socket;
     socket.connectToHost(ip,port);
+
+    //防止传输过快导致显示异常
+    emit signalsSrc.process(1);
 
     //wait connect
     QEventLoop* loop = new QEventLoop;
@@ -226,14 +237,21 @@ void SendFileWorker::run()
     //send header
     FileHeader fHeader;
     fHeader.fileSize=fileInfo.size();
-    strncpy(fHeader.fileName,fileInfo.fileName().toStdString().c_str(),sizeof(FileHeader::fileName));
+    //得到文件的相对路径
+    if(!rootPath.isEmpty()){
+        QDir dir(rootPath);
+        strncpy(fHeader.releativeFileName,dir.relativeFilePath(filePath).toStdString().c_str(),sizeof(FileHeader::releativeFileName));
+    }else
+        strncpy(fHeader.releativeFileName,fileInfo.fileName().toStdString().c_str(),sizeof(FileHeader::releativeFileName));
     socket.write((char*)&fHeader,sizeof(FileHeader));
+    qDebug()<<"send file name:"<<fHeader.releativeFileName;
     int n=0;
     conn = QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[&n,loop](qint64 s){
         n+=s;
         if(n==sizeof(FileHeader))
             loop->quit();
     });
+
     loop->exec();
     if(isFailed){
         return;
@@ -277,7 +295,7 @@ void SendFileWorker::run()
     //qDebug()<<"run over success!";
     file.close();
     socket.close();
-    emit signalsSrc.taskOver(true,"传输成功!");
+    emit signalsSrc.taskOver(true,QString("文件 %1 传输成功").arg(fileInfo.fileName()));
 }
 
 ///////////////////////////////////////
@@ -346,18 +364,38 @@ void RecvFileWorker::run()
     //避免后续数据还会调用该函数
     QObject::disconnect(conn);
 
-    emit signalsSrc.newFile(fHeader.fileName,fHeader.fileSize);
+    //告知主线程接受的文件名字与大小
+    emit signalsSrc.newFile(fHeader.releativeFileName,fHeader.fileSize);
+    emit signalsSrc.process(1);
 
     //qDebug()<<"header read success!";
 
     qint64 rstSize=fHeader.fileSize;
     qint64 totalSize=fHeader.fileSize;
-    QFile file(fHeader.fileName);
+    //open file,maybe need to create dir !
+    QFile file(fHeader.releativeFileName);
+    QFileInfo fileInfo(fHeader.releativeFileName);
+
+    //mkdir if necessary
+    int index = file.fileName().lastIndexOf('/');
+    if(index!=-1){
+        QString dirPath;
+        dirPath=file.fileName().first(index);
+        qDebug()<<"dirPath="<<dirPath;
+        QDir dir;
+        if(!dir.mkpath(dirPath)){
+            emit signalsSrc.taskOver(false,
+                                     QString("创建文件夹 %1 失败!").arg(dirPath));
+            return;
+        }
+    }
+    //mkdir end
+
     //qDebug()<<"recv file : fileName="<<fHeader.fileName<<" fileSize="<<fHeader.fileSize;
 
     if(!file.open(QIODevice::WriteOnly)){
         //qDebug()<<"open file failed!";
-        emit signalsSrc.taskOver(false,QString("打开文件 %1 失败!").arg(file.fileName()));
+        emit signalsSrc.taskOver(false,QString("打开文件 %1 失败!").arg(fileInfo.fileName()));
         return;
     }
 
@@ -381,7 +419,7 @@ void RecvFileWorker::run()
         return;
 
     //qDebug()<<"recv file success!";
-    emit signalsSrc.taskOver(true,QString("文件 %1 接受成功!").arg(file.fileName()));
+    emit signalsSrc.taskOver(true,QString("文件 %1 接受成功!").arg(fileInfo.fileName()));
     file.close();
     socket.close();
 }
@@ -399,11 +437,15 @@ void MyTcpServer::incomingConnection(qintptr socketDescriptor)
 
 void MainWindow::on_pbSendDir_clicked()
 {
+    //存储全部文件的绝对路径
     QStringList allFiles;
-    getAllFiles(allFiles,QFileDialog::getExistingDirectory());
-    for(auto& i:allFiles){
-        qDebug()<<i;
-    }
+    QString root = QFileDialog::getExistingDirectory();
+    if(root.isEmpty())
+        return;
+    getAllFiles(allFiles, root);
+    // for(auto& i:allFiles){
+    //     qDebug()<<i;
+    // }
 
     if(allFiles.size()>10){
         auto rst = QMessageBox::
@@ -411,6 +453,10 @@ void MainWindow::on_pbSendDir_clicked()
                      QMessageBox::Yes|QMessageBox::No);
         if(rst==QMessageBox::No)
             return;
+    }
+
+    for(auto &p:allFiles){
+        sendFile(p,root);
     }
 
     //do nothing,wait for implement
