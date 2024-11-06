@@ -32,12 +32,12 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-void MainWindow::do_taskEnd(bool s)
+void MainWindow::do_taskEnd(bool s,QString info)
 {
     if(s)
-        QMessageBox::information(this,"传输文件结束","文件传输成功");
+        QMessageBox::information(this,"传输文件成功",info);
     else
-        QMessageBox::critical(this,"传输文件结束","文件传输失败");
+        QMessageBox::critical(this,"传输文件失败",info);
 }
 
 void MainWindow::do_newClient(qintptr socketDescriptor)
@@ -52,10 +52,12 @@ void MainWindow::do_newFile(QString name, quint64 size)
 {
     // memory leak if close dialog rather than cancel
     QProgressDialog* dialog=
-        new QProgressDialog(QString("接收文件:%1").arg(name),"隐藏窗口",0,100,this);
+        new QProgressDialog(QString("接收文件:%1").arg(name),"中断传输",0,100,this);
     dialog->show();
     dialog->setAutoReset(false);
     connect(dialog,&QProgressDialog::canceled,dialog,&QProgressDialog::deleteLater);
+    connect(dialog,&QProgressDialog::canceled,
+            qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::forceEnd);
     connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,dialog,&QProgressDialog::setValue);
 }
 
@@ -86,9 +88,10 @@ void MainWindow::on_pbSend_clicked()
     SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path);
     connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
     QProgressDialog* dialog=
-        new QProgressDialog(QString("发送文件:%1").arg(fileInfo.fileName()),"隐藏窗口",0,100,this);
+        new QProgressDialog(QString("发送文件:%1").arg(fileInfo.fileName()),"中断连接",0,100,this);
     dialog->show();
     dialog->setAutoReset(false);
+    connect(dialog,&QProgressDialog::canceled,&(worker->signalsSrc),&WorkerSignals::forceEnd);
     // memory leak if close dialog  rather  cancel
     connect(dialog,&QProgressDialog::canceled,dialog,&QProgressDialog::deleteLater);
     connect(&(worker->signalsSrc),&WorkerSignals::process,dialog,&QProgressDialog::setValue);
@@ -122,6 +125,15 @@ SendFileWorker::~SendFileWorker()
 
 void SendFileWorker::run()
 {
+    QFileInfo fileInfo(filePath);
+    QFile file(filePath);
+    if(!file.open(QIODevice::ReadOnly))
+    {
+        //qDebug()<<"file not open!";
+        emit signalsSrc.taskOver(false,QString("文件 %1 打开失败!").arg(fileInfo.fileName()));
+        return;
+    }
+
     QTcpSocket socket;
     socket.connectToHost(ip,port);
 
@@ -129,22 +141,29 @@ void SendFileWorker::run()
     QEventLoop* loop = new QEventLoop;
     bool isFailed=false;
     //在出现错误时,会发送两次taskOver信号
-    //无法通过正常关闭窗口来中断连接,会导致僵尸线程.这里的中断可以通过系统强制关闭来实现
-    auto connDis = QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop](){
-        emit signalsSrc.taskOver(false);
+    auto connDis = QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop,&fileInfo](){
+        emit signalsSrc.taskOver(false,QString("在传输 %1 时断开连接!").arg(fileInfo.fileName()));
         qDebug()<<"client disconnect!";
         loop->quit();
         loop->deleteLater();
         isFailed=true;
     });
-    auto connErr = QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,[this,&isFailed,loop](){
-        emit signalsSrc.taskOver(false);
-        qDebug()<<"error occurred!";
-        isFailed=true;
+    auto connErr = QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,
+        [this,&isFailed,loop,&fileInfo]()
+        {
+            emit signalsSrc.taskOver(false,QString("在传输 %1 时出现错误!").arg(fileInfo.fileName()));
+            //qDebug()<<"error occurred!";
+            isFailed=true;
+            loop->quit();
+            loop->deleteLater();
+        });
+    auto connForceEnd = QObject::connect
+        (&signalsSrc,&WorkerSignals::forceEnd,loop,[this,&isFailed,loop](){
+        //qDebug()<<"force end!";
         loop->quit();
         loop->deleteLater();
-    });
-
+        isFailed=true;
+        });
     auto conn =QObject::connect(&socket,&QTcpSocket::connected,loop,&QEventLoop::quit);
     loop->exec();
     if(isFailed){
@@ -153,14 +172,7 @@ void SendFileWorker::run()
     //qDebug()<<loop->isRunning();
     //qDebug()<<"connect success";
 
-    QFileInfo fileInfo(filePath);
-    QFile file(filePath);
-    if(!file.open(QIODevice::ReadOnly))
-    {
-        //qDebug()<<"file not open!";
-        emit signalsSrc.taskOver(false);
-        return;
-    }
+
     //qDebug()<<"file open success!";
 
     //send header
@@ -217,7 +229,7 @@ void SendFileWorker::run()
     //qDebug()<<"run over success!";
     file.close();
     socket.close();
-    emit signalsSrc.taskOver(true);
+    emit signalsSrc.taskOver(true,"传输成功!");
 }
 
 ///////////////////////////////////////
@@ -241,7 +253,7 @@ void RecvFileWorker::run()
     socket.setReadBufferSize(readBufferSize);
     if(!socket.setSocketDescriptor(socketDescriptor)){
         //qDebug()<<"set socket failed!";
-        emit signalsSrc.taskOver(false);
+        emit signalsSrc.taskOver(false,"在接受文件时,打开套接字失败!");
         return;
     }
     //qDebug()<<"set socket success";
@@ -251,20 +263,27 @@ void RecvFileWorker::run()
     bool isFailed=false;
     //在出现错误时,会发送两次taskOver信号
     auto connDis = QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop](){
-        emit signalsSrc.taskOver(false);
-        qDebug()<<"client disconnect!";
+        emit signalsSrc.taskOver(false,"对方中断传输!");
+        //qDebug()<<"client disconnect!";
         loop->quit();
         loop->deleteLater();
         isFailed=true;
     });
 
     auto connErr = QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,[this,&isFailed,loop](){
-        emit signalsSrc.taskOver(false);
-        qDebug()<<"error occurred!";
+        emit signalsSrc.taskOver(false,"文件传输出现错误!");
+        //qDebug()<<"error occurred!";
         isFailed=true;
         loop->deleteLater();
         loop->quit();
     });
+    auto connForceEnd = QObject::connect
+        (&signalsSrc,&WorkerSignals::forceEnd,loop,[this,&isFailed,loop](){
+            //qDebug()<<"force end!";
+            loop->quit();
+            loop->deleteLater();
+            isFailed=true;
+        });
 
     FileHeader fHeader;
     int n=0;
@@ -290,7 +309,7 @@ void RecvFileWorker::run()
 
     if(!file.open(QIODevice::WriteOnly)){
         //qDebug()<<"open file failed!";
-        emit signalsSrc.taskOver(false);
+        emit signalsSrc.taskOver(false,QString("打开文件 %1 失败!").arg(file.fileName()));
         return;
     }
 
@@ -314,7 +333,7 @@ void RecvFileWorker::run()
         return;
 
     //qDebug()<<"recv file success!";
-    emit signalsSrc.taskOver(true);
+    emit signalsSrc.taskOver(true,QString("文件 %1 接受成功!").arg(file.fileName()));
     file.close();
     socket.close();
 }

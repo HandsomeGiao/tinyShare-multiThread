@@ -27,9 +27,10 @@ public:
     WorkerSignals(){}
     ~WorkerSignals(){}
 signals:
-    void taskOver(bool success);
+    void taskOver(bool success,QString info);
     void process(int bytes);
     void newFile(QString name,quint64 size);
+    void forceEnd();
 };
 
 class SendFileWorker : public QRunnable
@@ -84,7 +85,7 @@ public:
     ~MainWindow();
 
 private slots:
-    void do_taskEnd(bool s);
+    void do_taskEnd(bool s,QString info);
     void do_newClient(qintptr socketDescriptor);
     void do_newFile(QString name,quint64 size);
 
