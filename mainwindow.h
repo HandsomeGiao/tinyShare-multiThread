@@ -8,6 +8,7 @@
 #include<QTcpSocket>
 #include<QTcpServer>
 #include<QObject>
+#include<QVBoxLayout>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -23,6 +24,7 @@ struct FileHeader{
 class WorkerSignals : public QObject
 {
     Q_OBJECT
+    //func
 public:
     WorkerSignals(){}
     ~WorkerSignals(){}
@@ -83,7 +85,8 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-
+private:
+    void getAllFiles(QStringList& allFiles,QString dirPath);
 private slots:
     void do_taskEnd(bool s,QString info);
     void do_newClient(qintptr socketDescriptor);
@@ -92,11 +95,15 @@ private slots:
     void on_pbListen_clicked();
     void on_pbSend_clicked();
 
+    void on_pbSendDir_clicked();
+
 private:
     Ui::MainWindow *ui;
 
     MyTcpServer* server=nullptr;
-    QTcpSocket* client=nullptr;
+    //存储所有文件传输信息的布局
+    QVBoxLayout* layout=nullptr;
+
 
     // QWidget interface
 protected:

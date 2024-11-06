@@ -6,50 +6,57 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>800</width>
-    <height>600</height>
+    <width>659</width>
+    <height>332</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>MainWindow</string>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QHBoxLayout" name="horizontalLayout_3">
+   <layout class="QVBoxLayout" name="verticalLayout_2">
     <item>
-     <layout class="QVBoxLayout" name="FileOperate">
+     <layout class="QVBoxLayout" name="verticalLayout">
       <item>
-       <layout class="QVBoxLayout" name="verticalLayout">
+       <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
-         <layout class="QHBoxLayout" name="horizontalLayout">
-          <item>
-           <widget class="QLineEdit" name="leIP">
-            <property name="inputMask">
-             <string/>
-            </property>
-            <property name="text">
-             <string>127.0.0.1</string>
-            </property>
-            <property name="placeholderText">
-             <string>目标IP地址</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLineEdit" name="lePort">
-            <property name="text">
-             <string>8888</string>
-            </property>
-            <property name="placeholderText">
-             <string>目标端口</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
+         <widget class="QLineEdit" name="leIP">
+          <property name="inputMask">
+           <string/>
+          </property>
+          <property name="text">
+           <string>127.0.0.1</string>
+          </property>
+          <property name="placeholderText">
+           <string>目标IP地址</string>
+          </property>
+         </widget>
         </item>
+        <item>
+         <widget class="QLineEdit" name="lePort">
+          <property name="text">
+           <string>8888</string>
+          </property>
+          <property name="placeholderText">
+           <string>目标端口</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayout_3">
         <item>
          <widget class="QPushButton" name="pbSend">
           <property name="text">
            <string>发送文件</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="pbSendDir">
+          <property name="text">
+           <string>发送文件夹</string>
           </property>
          </widget>
         </item>
@@ -78,6 +85,23 @@
          </widget>
         </item>
        </layout>
+      </item>
+      <item>
+       <widget class="QScrollArea" name="saShowInfo">
+        <property name="widgetResizable">
+         <bool>true</bool>
+        </property>
+        <widget class="QWidget" name="scrollAreaWidgetContents_3">
+         <property name="geometry">
+          <rect>
+           <x>0</x>
+           <y>0</y>
+           <width>643</width>
+           <height>236</height>
+          </rect>
+         </property>
+        </widget>
+       </widget>
       </item>
      </layout>
     </item>

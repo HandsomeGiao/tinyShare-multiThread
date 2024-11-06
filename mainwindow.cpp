@@ -10,6 +10,8 @@
 #include<QDir>
 #include<QProgressDialog>
 #include<QCloseEvent>
+#include<QGroupBox>
+#include <QProgressBar>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -24,7 +26,14 @@ MainWindow::MainWindow(QWidget *parent)
     dir.mkdir("recvFiles");
     QDir::setCurrent(QDir::currentPath() + "/recvFiles");
 
-    setFixedSize(300,130);
+    setFixedSize(600,300);
+
+    //sa init
+    layout=new QVBoxLayout;
+    QGroupBox* gb=new QGroupBox(this);
+    gb->setLayout(layout);
+    ui->saShowInfo->setWidget(gb);
+    ui->saShowInfo->show();
 }
 
 MainWindow::~MainWindow()
@@ -32,12 +41,22 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
+void MainWindow::getAllFiles(QStringList &allFiles, QString dirPath)
+{
+    auto files = QDir(dirPath).entryList(QDir::Files|QDir::NoDotAndDotDot);
+    auto dirs = QDir(dirPath).entryList(QDir::Dirs|QDir::NoDotAndDotDot);
+    for(auto& i:files){
+        allFiles.push_back(dirPath+"/"+i);
+    }
+    for(auto& i:dirs){
+        getAllFiles(allFiles,dirPath+"/"+i);
+    }
+}
+
 void MainWindow::do_taskEnd(bool s,QString info)
 {
-    if(s)
-        QMessageBox::information(this,"传输文件成功",info);
-    else
-        QMessageBox::critical(this,"传输文件失败",info);
+    //do nothing
+    //在文件传输结束时,可以通过这个函数检测到对应信息(暂时没有删除connect函数),但是现在已经废弃了
 }
 
 void MainWindow::do_newClient(qintptr socketDescriptor)
@@ -51,14 +70,27 @@ void MainWindow::do_newClient(qintptr socketDescriptor)
 void MainWindow::do_newFile(QString name, quint64 size)
 {
     // memory leak if close dialog rather than cancel
-    QProgressDialog* dialog=
-        new QProgressDialog(QString("接收文件:%1").arg(name),"中断传输",0,100,this);
-    dialog->show();
-    dialog->setAutoReset(false);
-    connect(dialog,&QProgressDialog::canceled,dialog,&QProgressDialog::deleteLater);
-    connect(dialog,&QProgressDialog::canceled,
-            qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::forceEnd);
-    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,dialog,&QProgressDialog::setValue);
+    QHBoxLayout* hl=new QHBoxLayout();
+    QProgressBar* bar=new QProgressBar(this);
+    auto btn = new QPushButton("取消传输",this);
+    bar->setFormat(QString("%1 : %p%").arg(name));
+    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,bar,&QProgressBar::setValue);
+    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::taskOver,bar,[bar,hl,btn](bool s,QString info){
+        bar->setFormat(bar->format() + info);
+        btn->disconnect();
+        btn->setText("删除消息");
+        connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
+            bar->deleteLater();
+            btn->deleteLater();
+            hl->deleteLater();
+        });
+    });
+    hl->addWidget(bar);
+    hl->addWidget(btn);
+    hl->setStretchFactor(bar,1);
+    hl->setStretchFactor(btn,0);
+    connect(btn,&QPushButton::clicked,qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::forceEnd);
+    layout->addLayout(hl);
 }
 
 void MainWindow::on_pbListen_clicked()
@@ -87,15 +119,31 @@ void MainWindow::on_pbSend_clicked()
     QFileInfo fileInfo(path);
     SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path);
     connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
-    QProgressDialog* dialog=
-        new QProgressDialog(QString("发送文件:%1").arg(fileInfo.fileName()),"中断连接",0,100,this);
-    dialog->show();
-    dialog->setAutoReset(false);
-    connect(dialog,&QProgressDialog::canceled,&(worker->signalsSrc),&WorkerSignals::forceEnd);
-    // memory leak if close dialog  rather  cancel
-    connect(dialog,&QProgressDialog::canceled,dialog,&QProgressDialog::deleteLater);
-    connect(&(worker->signalsSrc),&WorkerSignals::process,dialog,&QProgressDialog::setValue);
+
     QThreadPool::globalInstance()->start(worker);
+
+    QHBoxLayout* hl=new QHBoxLayout();
+    QProgressBar* bar=new QProgressBar(this);
+    auto btn = new QPushButton("取消传输",this);
+    bar->setFormat(QString("%1 : %p%").arg(fileInfo.fileName()));
+    connect(&(worker->signalsSrc),&WorkerSignals::process,bar,&QProgressBar::setValue);
+    connect(btn,&QPushButton::clicked,&(worker->signalsSrc),&WorkerSignals::forceEnd);
+    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,bar,[bar,hl,btn](bool s,QString info){
+        bar->setFormat(bar->format() + info);
+        btn->disconnect();
+        btn->setText("删除消息");
+        connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
+            bar->deleteLater();
+            btn->deleteLater();
+            hl->deleteLater();
+        });
+    });
+    //ui
+    hl->addWidget(bar);
+    hl->addWidget(btn);
+    hl->setStretchFactor(bar,1);
+    hl->setStretchFactor(btn,0);
+    layout->addLayout(hl);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -338,7 +386,6 @@ void RecvFileWorker::run()
     socket.close();
 }
 
-
 MyTcpServer::MyTcpServer(QObject *parent)
     :QTcpServer(parent)
 {
@@ -348,4 +395,23 @@ MyTcpServer::MyTcpServer(QObject *parent)
 void MyTcpServer::incomingConnection(qintptr socketDescriptor)
 {
     emit newClient(socketDescriptor);
+}
+
+void MainWindow::on_pbSendDir_clicked()
+{
+    QStringList allFiles;
+    getAllFiles(allFiles,QFileDialog::getExistingDirectory());
+    for(auto& i:allFiles){
+        qDebug()<<i;
+    }
+
+    if(allFiles.size()>10){
+        auto rst = QMessageBox::
+            question(this,"确认",QString("文件内文件数量为%1,建议以压缩包进行传输,是否继续传输?").arg(allFiles.size()),
+                     QMessageBox::Yes|QMessageBox::No);
+        if(rst==QMessageBox::No)
+            return;
+    }
+
+    //do nothing,wait for implement
 }
