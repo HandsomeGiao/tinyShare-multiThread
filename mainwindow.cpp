@@ -29,11 +29,19 @@ MainWindow::MainWindow(QWidget *parent)
     setFixedSize(600,300);
 
     //sa init
-    layout=new QVBoxLayout;
+    // uncompleted info
+    uncopmletedVL=new QVBoxLayout;
     QGroupBox* gb=new QGroupBox(this);
-    gb->setLayout(layout);
+    gb->setLayout(uncopmletedVL);
     ui->saShowInfo->setWidget(gb);
     ui->saShowInfo->show();
+
+    //completed info
+    completedVL=new QVBoxLayout;
+    gb=new QGroupBox(this);
+    gb->setLayout(completedVL);
+    ui->saCompleted->setWidget(gb);
+    ui->saCompleted->show();
 }
 
 MainWindow::~MainWindow()
@@ -63,29 +71,33 @@ void MainWindow::sendFile(QString path,QString rootPath)
     SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path,rootPath);
     connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
 
-
     QHBoxLayout* hl=new QHBoxLayout();
     QProgressBar* bar=new QProgressBar(this);
     auto btn = new QPushButton("取消传输",this);
     bar->setFormat(QString("%1 : %p%").arg(fileInfo.fileName()));
     connect(&(worker->signalsSrc),&WorkerSignals::process,bar,&QProgressBar::setValue);
     connect(btn,&QPushButton::clicked,&(worker->signalsSrc),&WorkerSignals::forceEnd);
-    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,bar,[bar,hl,btn](bool s,QString info){
-        bar->setFormat(info);
+    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,bar,[bar,hl,btn,this](bool s,QString info){
         btn->disconnect();
+        bar->setFormat(info);
         btn->setText("删除消息");
         connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
             bar->deleteLater();
             btn->deleteLater();
             hl->deleteLater();
         });
+        //移动到completedVL
+        if(s){
+            uncopmletedVL->removeItem(hl);
+            completedVL->addLayout(hl);
+        }
     });
     //ui
     hl->addWidget(bar);
     hl->addWidget(btn);
     hl->setStretchFactor(bar,1);
     hl->setStretchFactor(btn,0);
-    layout->addLayout(hl);
+    uncopmletedVL->addLayout(hl);
     bar->show();
 
     // start需要在最后使用,避免worker先执行完而信号没有连接上
@@ -116,7 +128,7 @@ void MainWindow::do_newFile(QString name, quint64 size)
     auto btn = new QPushButton("取消传输",this);
     bar->setFormat(QString("%1 : %p%").arg(name));
     connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,bar,&QProgressBar::setValue);
-    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::taskOver,bar,[bar,hl,btn](bool s,QString info){
+    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::taskOver,bar,[bar,hl,btn,this](bool s,QString info){
         bar->setFormat(info);
         btn->disconnect();
         btn->setText("删除消息");
@@ -125,13 +137,19 @@ void MainWindow::do_newFile(QString name, quint64 size)
             btn->deleteLater();
             hl->deleteLater();
         });
+
+        //移动到completedVL
+        if(s){
+            uncopmletedVL->removeItem(hl);
+            completedVL->addLayout(hl);
+        }
     });
     hl->addWidget(bar);
     hl->addWidget(btn);
     hl->setStretchFactor(bar,1);
     hl->setStretchFactor(btn,0);
     connect(btn,&QPushButton::clicked,qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::forceEnd);
-    layout->addLayout(hl);
+    uncopmletedVL->addLayout(hl);
     bar->show();
 
     //continue
@@ -292,9 +310,9 @@ void SendFileWorker::run()
     QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop,&buffer](){
         if(buffer.isEmpty())
             buffer=file.read(dataBlockSize);
-        qDebug()<<"before buffer size="<<buffer.size();
+        //qDebug()<<"before buffer size="<<buffer.size();
         buffer = buffer.last(buffer.size()-socket.write(buffer));
-        qDebug()<<"after buffer size="<<buffer.size();
+        //qDebug()<<"after buffer size="<<buffer.size();
         if(file.atEnd()){
             sendTimer.stop();
         }
@@ -517,3 +535,26 @@ void MainWindow::on_pbSendDir_clicked()
 
     //do nothing,wait for implement
 }
+
+void MainWindow::on_pbClearCompleted_clicked()
+{
+    //删除所有完成记录
+    // 请不要修改completedVL/uncompltedVL的子控件结构! 2024.11.7 15.18
+    QLayoutItem* item0=nullptr;
+    while((item0 = completedVL->takeAt(0))!=nullptr){
+        QPushButton* btn = qobject_cast<QPushButton*>(item0->layout()->itemAt(1)->widget());
+        btn->click();
+    }
+}
+
+void MainWindow::on_pbCancelAll_clicked()
+{
+    // 停止所有未完成的任务
+    // 请不要修改completedVL/uncompltedVL的子控件结构! 2024.11.7 15.18
+    for(int i=0;i<uncopmletedVL->count();++i){
+        auto item = uncopmletedVL->itemAt(i);
+        QPushButton* btn = qobject_cast<QPushButton*>(item->layout()->itemAt(1)->widget());
+        btn->click();
+    }
+}
+

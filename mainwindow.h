@@ -100,13 +100,17 @@ private slots:
 
     void on_pbSendDir_clicked();
 
+    void on_pbClearCompleted_clicked();
+
+    void on_pbCancelAll_clicked();
+
 private:
     Ui::MainWindow *ui;
 
     MyTcpServer* server=nullptr;
     //存储所有文件传输信息的布局
-    QVBoxLayout* layout=nullptr;
-
+    QVBoxLayout* uncopmletedVL=nullptr;
+    QVBoxLayout* completedVL=nullptr;
 
     // QWidget interface
 protected:

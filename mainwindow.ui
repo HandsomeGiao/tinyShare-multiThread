@@ -91,7 +91,7 @@
         <property name="currentIndex">
          <number>0</number>
         </property>
-        <widget class="QWidget" name="widget">
+        <widget class="QWidget" name="widget_2">
          <attribute name="title">
           <string>正在传输</string>
          </attribute>
@@ -156,7 +156,7 @@
           </item>
          </layout>
         </widget>
-        <widget class="QWidget" name="">
+        <widget class="QWidget" name="widget">
          <attribute name="title">
           <string>传输完成</string>
          </attribute>
@@ -179,7 +179,7 @@
                </spacer>
               </item>
               <item>
-               <widget class="QPushButton" name="pushButton">
+               <widget class="QPushButton" name="pbClearCompleted">
                 <property name="text">
                  <string>清除所有记录</string>
                 </property>
