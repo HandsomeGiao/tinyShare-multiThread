@@ -57,10 +57,12 @@ void MainWindow::sendFile(QString path,QString rootPath)
 {
     //传入的是绝对路径
     QFileInfo fileInfo(path);
+    //忽略空文件
+    if(fileInfo.size()==0)
+        return;
     SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path,rootPath);
     connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
 
-    QThreadPool::globalInstance()->start(worker);
 
     QHBoxLayout* hl=new QHBoxLayout();
     QProgressBar* bar=new QProgressBar(this);
@@ -85,6 +87,9 @@ void MainWindow::sendFile(QString path,QString rootPath)
     hl->setStretchFactor(btn,0);
     layout->addLayout(hl);
     bar->show();
+
+    // start需要在最后使用,避免worker先执行完而信号没有连接上
+    QThreadPool::globalInstance()->start(worker);
 }
 
 void MainWindow::do_taskEnd(bool s,QString info)
@@ -98,6 +103,8 @@ void MainWindow::do_newClient(qintptr socketDescriptor)
     RecvFileWorker* worker=new RecvFileWorker(socketDescriptor);
     connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
     connect(&(worker->signalsSrc),&WorkerSignals::newFile,this,&MainWindow::do_newFile);
+
+    // start需要在最后使用,避免worker先执行完而信号没有连接上
     QThreadPool::globalInstance()->start(worker);
 }
 
@@ -126,6 +133,9 @@ void MainWindow::do_newFile(QString name, quint64 size)
     connect(btn,&QPushButton::clicked,qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::forceEnd);
     layout->addLayout(hl);
     bar->show();
+
+    //continue
+    emit qobject_cast<WorkerSignals*>(sender())->taskContinue();
 }
 
 void MainWindow::on_pbListen_clicked()
@@ -208,9 +218,9 @@ void SendFileWorker::run()
         isFailed=true;
     });
     auto connErr = QObject::connect(&socket,&QTcpSocket::errorOccurred,loop,
-        [this,&isFailed,loop,&fileInfo]()
+        [this,&isFailed,loop,&fileInfo,&socket]()
         {
-            emit signalsSrc.taskOver(false,QString("在传输 %1 时出现错误!").arg(fileInfo.fileName()));
+            emit signalsSrc.taskOver(false,QString("在传输 %1 时出现错误:%2").arg(fileInfo.fileName(),socket.errorString()));
             //qDebug()<<"error occurred!";
             isFailed=true;
             loop->quit();
@@ -244,10 +254,10 @@ void SendFileWorker::run()
     }else
         strncpy(fHeader.releativeFileName,fileInfo.fileName().toStdString().c_str(),sizeof(FileHeader::releativeFileName));
     socket.write((char*)&fHeader,sizeof(FileHeader));
-    qDebug()<<"send file name:"<<fHeader.releativeFileName;
+    //qDebug()<<"send file name:"<<fHeader.releativeFileName;
     int n=0;
     conn = QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[&n,loop](qint64 s){
-        n+=s;
+        n += s;
         if(n==sizeof(FileHeader))
             loop->quit();
     });
@@ -264,17 +274,8 @@ void SendFileWorker::run()
     //send file
     qint64 rstSize,totalSize;
     rstSize=totalSize=fileInfo.size();
-    QTimer sendTimer;
-    sendTimer.start(1);
-    QByteArray buffer;
-    QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop,&buffer](){
-        if(buffer.isEmpty())
-            buffer=file.read(dataBlockSize);
-        buffer = buffer.last(buffer.size()-socket.write(buffer));
-        if(file.atEnd()){
-            sendTimer.stop();
-        }
-    });
+
+    //先关联bytesWritten信号,避免数据发送完毕了还没有触发该信号
     QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize,&connDis,&connErr](qint64 s){
         rstSize -= s;
         emit signalsSrc.process((double)(totalSize-rstSize)/totalSize*100);
@@ -285,11 +286,37 @@ void SendFileWorker::run()
             loop->quit();
         }
     });
+
+    QTimer sendTimer;
+    QByteArray buffer;
+    QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop,&buffer](){
+        if(buffer.isEmpty())
+            buffer=file.read(dataBlockSize);
+        qDebug()<<"before buffer size="<<buffer.size();
+        buffer = buffer.last(buffer.size()-socket.write(buffer));
+        qDebug()<<"after buffer size="<<buffer.size();
+        if(file.atEnd()){
+            sendTimer.stop();
+        }
+    });
+    sendTimer.start(1);
+
+    //如果文件为空文件 则无需事件循环
     loop->exec();
-    loop->deleteLater();
-    loop = nullptr;
+
     if(isFailed)
         return;
+
+    //qDebug()<<"wait for client disconnect";
+
+    //到此为止,所有数据已经写入底层Tcp协议栈,但是可能还没有发送出去,这里需要等待对方在接受完成后主动关闭连接
+    // 有可能底层TCP传输失败,导致这里卡死?
+    QObject::connect(&socket,&QTcpSocket::disconnected,loop,&QEventLoop::quit);
+    loop->exec();
+    if(isFailed)
+        return;
+    loop->deleteLater();
+    loop = nullptr;
 
     //send file complete
     //qDebug()<<"run over success!";
@@ -365,8 +392,17 @@ void RecvFileWorker::run()
     QObject::disconnect(conn);
 
     //告知主线程接受的文件名字与大小
+    //主线程需要一定的时间处理该信号,否则可能会导致显示异常,因此需要休眠一段时间
     emit signalsSrc.newFile(fHeader.releativeFileName,fHeader.fileSize);
-    emit signalsSrc.process(1);
+    {
+        // local tcnn
+        auto tcnn = QObject::connect(&signalsSrc,&WorkerSignals::taskContinue,loop,&QEventLoop::quit);
+        loop->exec();
+        if(isFailed)
+            return;
+        QObject::disconnect(tcnn);
+    }
+    emit signalsSrc.process(0);
 
     //qDebug()<<"header read success!";
 
@@ -381,7 +417,7 @@ void RecvFileWorker::run()
     if(index!=-1){
         QString dirPath;
         dirPath=file.fileName().first(index);
-        qDebug()<<"dirPath="<<dirPath;
+        //qDebug()<<"dirPath="<<dirPath;
         QDir dir;
         if(!dir.mkpath(dirPath)){
             emit signalsSrc.taskOver(false,
@@ -399,7 +435,7 @@ void RecvFileWorker::run()
         return;
     }
 
-    //send file
+    //recv file
     QObject::connect(&socket,&QTcpSocket::readyRead,loop,[&file,&rstSize,loop,&socket,this,totalSize,&connDis,&connErr](){
         QByteArray buffer=socket.readAll();
         rstSize -= buffer.size();
@@ -411,8 +447,20 @@ void RecvFileWorker::run()
             loop->quit();
         }
     });
+    //check small file
+    if(socket.bytesAvailable()){
+        QByteArray buffer=socket.readAll();
+        rstSize -= buffer.size();
+        file.write(buffer);
+    }
 
-    loop->exec();
+    if(rstSize<=0)
+    {
+        QObject::disconnect(connDis);
+        QObject::disconnect(connErr);
+    }else
+        loop->exec();
+
     loop->deleteLater();
     loop = nullptr;
     if(isFailed)
@@ -447,6 +495,14 @@ void MainWindow::on_pbSendDir_clicked()
     //     qDebug()<<i;
     // }
 
+    if(allFiles.isEmpty()){
+        QMessageBox::critical(this,"错误","文件夹为空!");
+        return;
+    }
+    // if(allFiles.size()>100){
+    //     QMessageBox::warning(this,"文件数量过多",QString("文件数量为%1(>100),过多!请压缩后发送!").arg(allFiles.size()));
+    //     return;
+    // }
     if(allFiles.size()>10){
         auto rst = QMessageBox::
             question(this,"确认",QString("文件内文件数量为%1,建议以压缩包进行传输,是否继续传输?").arg(allFiles.size()),

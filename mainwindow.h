@@ -33,6 +33,7 @@ signals:
     void process(int bytes);
     void newFile(QString name,quint64 size);
     void forceEnd();
+    void taskContinue();
 };
 
 class SendFileWorker : public QRunnable
