@@ -1,5 +1,9 @@
 # tinyShare-multiThread
 
+#### 功能简介:
+
+P2P传输,支持文件夹整个传输,每个文件都是一个单独的线程(所以如果你有很多很多小文件,请将其打包后发送)
+
 环境:
 QT6.8 MINGW64 QTcreator14.0.2(community)
 
