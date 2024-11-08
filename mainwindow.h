@@ -104,6 +104,8 @@ private slots:
 
     void on_pbCancelAll_clicked();
 
+    void on_pbChooseDir_clicked();
+
 private:
     Ui::MainWindow *ui;
 
@@ -111,6 +113,8 @@ private:
     //存储所有文件传输信息的布局
     QVBoxLayout* uncopmletedVL=nullptr;
     QVBoxLayout* completedVL=nullptr;
+
+    QString fileSavedPath;
 
     // QWidget interface
 protected:

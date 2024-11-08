@@ -63,7 +63,21 @@
        </layout>
       </item>
       <item>
-       <layout class="QHBoxLayout" name="horizontalLayout_2">
+       <layout class="QHBoxLayout" name="hLDirAndPort" stretch="5,0,1,0">
+        <item>
+         <widget class="QLineEdit" name="leFileSavedDir">
+          <property name="readOnly">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="pbChooseDir">
+          <property name="text">
+           <string>选择文件存储位置</string>
+          </property>
+         </widget>
+        </item>
         <item>
          <widget class="QLineEdit" name="leListenPort">
           <property name="inputMask">

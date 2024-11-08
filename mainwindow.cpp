@@ -24,7 +24,10 @@ MainWindow::MainWindow(QWidget *parent)
 
     QDir dir(QDir::currentPath());
     dir.mkdir("recvFiles");
-    QDir::setCurrent(QDir::currentPath() + "/recvFiles");
+
+    fileSavedPath = QDir::currentPath()+"/recvFiles";
+    QDir::setCurrent(fileSavedPath);
+    ui->leFileSavedDir->setText(fileSavedPath);
 
     setFixedSize(600,300);
 
@@ -558,5 +561,16 @@ void MainWindow::on_pbCancelAll_clicked()
         QPushButton* btn = qobject_cast<QPushButton*>(item->layout()->itemAt(1)->widget());
         btn->click();
     }
+}
+
+
+void MainWindow::on_pbChooseDir_clicked()
+{
+    QString path=QFileDialog::getExistingDirectory(this,"选择文件夹",".");
+    if(path.isEmpty())
+        return;
+    fileSavedPath = path;
+    QDir::setCurrent(fileSavedPath);
+    ui->leFileSavedDir->setText(fileSavedPath);
 }
 
