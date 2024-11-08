@@ -265,8 +265,10 @@ void SendFileWorker::run()
     //send header
     FileHeader fHeader;
     fHeader.fileSize=fileInfo.size();
-    //得到文件的相对路径
+    //得到文件的相对路径,这个相对路径要包括传送的文件夹名,以便接收方保存
     if(!rootPath.isEmpty()){
+        //这里的rootPath(即选择传送的文件夹)必须包含至少一个'/',否则会出现错误
+        rootPath = rootPath.first(rootPath.lastIndexOf('/'));
         QDir dir(rootPath);
         strncpy(fHeader.releativeFileName,dir.relativeFilePath(filePath).toStdString().c_str(),sizeof(FileHeader::releativeFileName));
     }else
@@ -521,7 +523,7 @@ void MainWindow::on_pbSendDir_clicked()
     //     QMessageBox::warning(this,"文件数量过多",QString("文件数量为%1(>100),过多!请压缩后发送!").arg(allFiles.size()));
     //     return;
     // }
-    if(allFiles.size()>10){
+    if(allFiles.size()>100){
         auto rst = QMessageBox::
             question(this,"确认",QString("文件内文件数量为%1,建议以压缩包进行传输,是否继续传输?").arg(allFiles.size()),
                      QMessageBox::Yes|QMessageBox::No);
