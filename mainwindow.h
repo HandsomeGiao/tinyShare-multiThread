@@ -30,7 +30,7 @@ public:
     ~WorkerSignals(){}
 signals:
     void taskOver(bool success,QString info);
-    void process(int bytes);
+    void process(quint64 finishedBytes,quint64 totalBytes);
     void newFile(QString name,quint64 size);
     void forceEnd();
     void taskContinue();

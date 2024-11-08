@@ -76,9 +76,15 @@ void MainWindow::sendFile(QString path,QString rootPath)
 
     QHBoxLayout* hl=new QHBoxLayout();
     QProgressBar* bar=new QProgressBar(this);
+    bar->setAlignment(Qt::AlignRight);
+    //等宽字体  在数字快速变化时也不会发生抖动
+    bar->setFont({"Courier"});
     auto btn = new QPushButton("取消传输",this);
     bar->setFormat(QString("%1 : %p%").arg(fileInfo.fileName()));
-    connect(&(worker->signalsSrc),&WorkerSignals::process,bar,&QProgressBar::setValue);
+    connect(&(worker->signalsSrc),&WorkerSignals::process,bar,[bar,fileInfo](quint64 suc,quint64 total){
+        bar->setValue(suc*100/total);
+        bar->setFormat(QString("%1 : %2MB/ %3MB/ %4%").arg(fileInfo.fileName()).arg(suc/1024.0/1024.0,7,'f',2).arg(total/1024.0/1024.0,7,'f',2).arg(suc*100.0/total,3,'f',1));
+    });
     connect(btn,&QPushButton::clicked,&(worker->signalsSrc),&WorkerSignals::forceEnd);
     connect(&(worker->signalsSrc),&WorkerSignals::taskOver,bar,[bar,hl,btn,this](bool s,QString info){
         btn->disconnect();
@@ -128,9 +134,13 @@ void MainWindow::do_newFile(QString name, quint64 size)
     // memory leak if close dialog rather than cancel
     QHBoxLayout* hl=new QHBoxLayout();
     QProgressBar* bar=new QProgressBar(this);
+    bar->setAlignment(Qt::AlignRight);
+    bar->setFont({"Courier"});
     auto btn = new QPushButton("取消传输",this);
-    bar->setFormat(QString("%1 : %p%").arg(name));
-    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,bar,&QProgressBar::setValue);
+    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,bar,[bar,name](quint64 suc,quint64 total){
+        bar->setValue(suc*100/total);
+        bar->setFormat(QString("%1 : %2MB/ %3MB / %4 %").arg(name).arg(suc/1024.0/1024.0,7,'f',2).arg(total/1024.0/1024.0,7,'f',2).arg(suc*100.0/total,3,'f',1));
+    });
     connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::taskOver,bar,[bar,hl,btn,this](bool s,QString info){
         bar->setFormat(info);
         btn->disconnect();
@@ -224,9 +234,6 @@ void SendFileWorker::run()
     QTcpSocket socket;
     socket.connectToHost(ip,port);
 
-    //防止传输过快导致显示异常
-    emit signalsSrc.process(1);
-
     //wait connect
     QEventLoop* loop = new QEventLoop;
     bool isFailed=false;
@@ -301,7 +308,7 @@ void SendFileWorker::run()
     //先关联bytesWritten信号,避免数据发送完毕了还没有触发该信号
     QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize,&connDis,&connErr](qint64 s){
         rstSize -= s;
-        emit signalsSrc.process((double)(totalSize-rstSize)/totalSize*100);
+        emit signalsSrc.process(totalSize-rstSize,totalSize);
         if(rstSize<=0){
             //避免在传输完成后收到错误提示
             QObject::disconnect(connDis);
@@ -425,7 +432,6 @@ void RecvFileWorker::run()
             return;
         QObject::disconnect(tcnn);
     }
-    emit signalsSrc.process(0);
 
     //qDebug()<<"header read success!";
 
@@ -463,7 +469,7 @@ void RecvFileWorker::run()
         QByteArray buffer=socket.readAll();
         rstSize -= buffer.size();
         file.write(buffer);
-        emit signalsSrc.process((double)(totalSize-rstSize)/totalSize*100);
+        emit signalsSrc.process(totalSize-rstSize,totalSize);
         if(rstSize<=0){
             QObject::disconnect(connDis);
             QObject::disconnect(connErr);
