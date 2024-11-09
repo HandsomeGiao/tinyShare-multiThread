@@ -341,7 +341,7 @@ void SendFileWorker::run()
     if(rstSize > 0){
         //有数据需要发送
         file.seek(reply.begPos);
-        //qDebug()<<fileInfo.fileName()<<"beg at "<<reply.begPos;
+        qDebug()<<fileInfo.fileName()<<"beg at "<<reply.begPos;
 
         //先关联bytesWritten信号,避免数据发送完毕了还没有触发该信号
         QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize,&connDis,&connErr](qint64 s){
@@ -357,6 +357,7 @@ void SendFileWorker::run()
 
         QTimer sendTimer;
         QByteArray buffer;
+
         QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop,&buffer](){
             if(buffer.isEmpty())
                 buffer=file.read(dataBlockSize);
@@ -371,6 +372,8 @@ void SendFileWorker::run()
 
         //等待数据发送完毕
         loop->exec();
+        if(isFailed)
+            return;
         //到此为止,所有数据已经写入底层Tcp协议栈,但是可能还没有发送出去,这里需要等待对方在接受完成后主动关闭连接
         // 有可能底层TCP传输失败,导致这里卡死?
         //qDebug()<<"wait for client disconnect";
@@ -378,14 +381,10 @@ void SendFileWorker::run()
         loop->exec();
         if(isFailed)
             return;
-    }else{
-        //没有数据需要发送,直接成功
-        QObject::disconnect(connDis);
-        QObject::disconnect(connErr);
     }
 
-    loop->deleteLater();
-    loop = nullptr;
+    //没有数据需要发送,直接成功
+    delete loop;
 
     //send file complete
     //qDebug()<<"run over success!";
