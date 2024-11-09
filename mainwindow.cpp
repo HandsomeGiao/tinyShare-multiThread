@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include "mysqlite3.h"
 
 #include<QDebug>
 #include<QThreadPool>
@@ -12,6 +13,7 @@
 #include<QCloseEvent>
 #include<QGroupBox>
 #include <QProgressBar>
+#include<QCryptographicHash>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -22,14 +24,13 @@ MainWindow::MainWindow(QWidget *parent)
     server = new MyTcpServer(this);
     connect(server,&MyTcpServer::newClient,this,&MainWindow::do_newClient);
 
-    QDir dir(QDir::currentPath());
-    dir.mkdir("recvFiles");
-
+    //接收文件默认存储路径
     fileSavedPath = QDir::currentPath()+"/recvFiles";
-    QDir::setCurrent(fileSavedPath);
-    ui->leFileSavedDir->setText(fileSavedPath);
 
-    setFixedSize(600,300);
+    //注意!setCurrent后整个程序的相对路径都会更改!!!!!!所以尽量不要使用这个命令
+    //QDir::setCurrent(fileSavedPath);
+
+    ui->leFileSavedDir->setText(fileSavedPath);
 
     //sa init
     // uncompleted info
@@ -72,26 +73,30 @@ void MainWindow::sendFile(QString path,QString rootPath)
     if(fileInfo.size()==0)
         return;
     SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path,rootPath);
-    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
+    //connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
 
     QHBoxLayout* hl=new QHBoxLayout();
-    QProgressBar* bar=new QProgressBar(this);
-    bar->setAlignment(Qt::AlignRight);
+    QLineEdit* le=new QLineEdit(this);
+    le->setReadOnly(true);
+    le->setAlignment(Qt::AlignLeft);
     //等宽字体  在数字快速变化时也不会发生抖动
-    bar->setFont({"Courier"});
+    //le->setFont({"Courier"});
+    le->setText(QString("准备传输 %1,正在计算文件哈希值...").arg(fileInfo.fileName()));
+
     auto btn = new QPushButton("取消传输",this);
-    bar->setFormat(QString("%1 : %p%").arg(fileInfo.fileName()));
-    connect(&(worker->signalsSrc),&WorkerSignals::process,bar,[bar,fileInfo](quint64 suc,quint64 total){
-        bar->setValue(suc*100/total);
-        bar->setFormat(QString("%1 : %2MB/ %3MB/ %4%").arg(fileInfo.fileName()).arg(suc/1024.0/1024.0,7,'f',2).arg(total/1024.0/1024.0,7,'f',2).arg(suc*100.0/total,3,'f',1));
+    connect(&(worker->signalsSrc),&WorkerSignals::process,le,[fileInfo,le](quint64 suc,quint64 total){
+        QString info = QString("%1 : %2MB/ %3MB/ %4%").arg(fileInfo.fileName()).arg(suc/1024.0/1024.0,7,'f',2).
+                       arg(total/1024.0/1024.0,7,'f',2).arg(suc*100.0/total,3,'f',1);
+        le->setText(info);
     });
     connect(btn,&QPushButton::clicked,&(worker->signalsSrc),&WorkerSignals::forceEnd);
-    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,bar,[bar,hl,btn,this](bool s,QString info){
+    connect(&(worker->signalsSrc),&WorkerSignals::taskOver,le,[hl,btn,this,le](bool s,QString info){
         btn->disconnect();
-        bar->setFormat(info);
+        le->setText(info);
+        //qDebug()<<"setFormat:"<<info;
         btn->setText("删除消息");
-        connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
-            bar->deleteLater();
+        connect(btn,&QPushButton::clicked,hl,[hl,btn,le](){
+            le->deleteLater();
             btn->deleteLater();
             hl->deleteLater();
         });
@@ -102,12 +107,11 @@ void MainWindow::sendFile(QString path,QString rootPath)
         }
     });
     //ui
-    hl->addWidget(bar);
+    hl->addWidget(le);
     hl->addWidget(btn);
-    hl->setStretchFactor(bar,1);
+    hl->setStretchFactor(le,1);
     hl->setStretchFactor(btn,0);
     uncopmletedVL->addLayout(hl);
-    bar->show();
 
     // start需要在最后使用,避免worker先执行完而信号没有连接上
     QThreadPool::globalInstance()->start(worker);
@@ -116,12 +120,12 @@ void MainWindow::sendFile(QString path,QString rootPath)
 void MainWindow::do_taskEnd(bool s,QString info)
 {
     //do nothing
-    //在文件传输结束时,可以通过这个函数检测到对应信息(暂时没有删除connect函数),但是现在已经废弃了
+    //现在已经废弃了
 }
 
 void MainWindow::do_newClient(qintptr socketDescriptor)
 {
-    RecvFileWorker* worker=new RecvFileWorker(socketDescriptor);
+    RecvFileWorker* worker=new RecvFileWorker(socketDescriptor,fileSavedPath);
     connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
     connect(&(worker->signalsSrc),&WorkerSignals::newFile,this,&MainWindow::do_newFile);
 
@@ -133,20 +137,25 @@ void MainWindow::do_newFile(QString name, quint64 size)
 {
     // memory leak if close dialog rather than cancel
     QHBoxLayout* hl=new QHBoxLayout();
-    QProgressBar* bar=new QProgressBar(this);
-    bar->setAlignment(Qt::AlignRight);
-    bar->setFont({"Courier"});
+    QLineEdit* le=new QLineEdit(this);
+    le->setReadOnly(true);
+    le->setAlignment(Qt::AlignLeft);
+    //等宽字体  在数字快速变化时也不会发生抖动
+
     auto btn = new QPushButton("取消传输",this);
-    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,bar,[bar,name](quint64 suc,quint64 total){
-        bar->setValue(suc*100/total);
-        bar->setFormat(QString("%1 : %2MB/ %3MB / %4 %").arg(name).arg(suc/1024.0/1024.0,7,'f',2).arg(total/1024.0/1024.0,7,'f',2).arg(suc*100.0/total,3,'f',1));
+    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::process,le,[le,name](quint64 suc,quint64 total){
+        QString info = QString("%1 : %2MB/ %3MB / %4 %").
+                       arg(name).arg(suc/1024.0/1024.0,7,'f',2).arg(total/1024.0/1024.0,7,'f',2).arg(suc*100.0/total,3,'f',1);
+        le->setText(info);
+        //qDebug()<<info;
     });
-    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::taskOver,bar,[bar,hl,btn,this](bool s,QString info){
-        bar->setFormat(info);
+    connect(qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::taskOver,le,[le,hl,btn,this](bool s,QString info){
+        le->setText(info);
         btn->disconnect();
         btn->setText("删除消息");
-        connect(btn,&QPushButton::clicked,hl,[hl,bar,btn](){
-            bar->deleteLater();
+        //qDebug()<<"task over: "+info;
+        connect(btn,&QPushButton::clicked,hl,[hl,le,btn](){
+            le->deleteLater();
             btn->deleteLater();
             hl->deleteLater();
         });
@@ -157,13 +166,12 @@ void MainWindow::do_newFile(QString name, quint64 size)
             completedVL->addLayout(hl);
         }
     });
-    hl->addWidget(bar);
+    hl->addWidget(le);
     hl->addWidget(btn);
-    hl->setStretchFactor(bar,1);
+    hl->setStretchFactor(le,1);
     hl->setStretchFactor(btn,0);
     connect(btn,&QPushButton::clicked,qobject_cast<WorkerSignals*>(sender()),&WorkerSignals::forceEnd);
     uncopmletedVL->addLayout(hl);
-    bar->show();
 
     //continue
     emit qobject_cast<WorkerSignals*>(sender())->taskContinue();
@@ -230,9 +238,9 @@ void SendFileWorker::run()
         emit signalsSrc.taskOver(false,QString("文件 %1 打开失败!").arg(fileInfo.fileName()));
         return;
     }
+    // 默认会计算hash值,用于断点续传
 
     QTcpSocket socket;
-    socket.connectToHost(ip,port);
 
     //wait connect
     QEventLoop* loop = new QEventLoop;
@@ -249,7 +257,7 @@ void SendFileWorker::run()
         [this,&isFailed,loop,&fileInfo,&socket]()
         {
             emit signalsSrc.taskOver(false,QString("在传输 %1 时出现错误:%2").arg(fileInfo.fileName(),socket.errorString()));
-            //qDebug()<<"error occurred!";
+            qDebug()<<"error occurred:"+socket.errorString();
             isFailed=true;
             loop->quit();
             loop->deleteLater();
@@ -257,11 +265,13 @@ void SendFileWorker::run()
     auto connForceEnd = QObject::connect
         (&signalsSrc,&WorkerSignals::forceEnd,loop,[this,&isFailed,loop](){
         //qDebug()<<"force end!";
-        loop->quit();
-        loop->deleteLater();
-        isFailed=true;
+            loop->quit();
+            loop->deleteLater();
+            isFailed=true;
         });
+
     auto conn =QObject::connect(&socket,&QTcpSocket::connected,loop,&QEventLoop::quit);
+    socket.connectToHost(ip,port);
     loop->exec();
     if(isFailed){
         return;
@@ -269,12 +279,16 @@ void SendFileWorker::run()
     //qDebug()<<loop->isRunning();
     //qDebug()<<"connect success";
 
-
     //qDebug()<<"file open success!";
 
     //send header
     FileHeader fHeader;
     fHeader.fileSize=fileInfo.size();
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(&file);
+    file.reset();
+    //qDebug()<<"hash result = "<<hash.result().toHex();
+    strncpy(fHeader.fileHash,hash.result().toHex().toStdString().c_str(),sizeof(FileHeader::fileHash));
     //得到文件的相对路径,这个相对路径要包括传送的文件夹名,以便接收方保存
     if(!rootPath.isEmpty()){
         //这里的rootPath(即选择传送的文件夹)必须包含至少一个'/',否则会出现错误
@@ -301,50 +315,75 @@ void SendFileWorker::run()
 
     //qDebug()<<"send file header success";
 
+    //read reply
+    FileHeaderReply reply;
+    {
+        //read fHeader
+        int n=0;
+        //避免数据已经发送过来
+        n += socket.read((char*)&reply+n,sizeof(FileHeaderReply)-n);
+        auto conn = QObject::connect(&socket,&QTcpSocket::readyRead,loop,[&reply,&n,loop,&socket](){
+            n += socket.read((char*)&reply+n,sizeof(FileHeaderReply)-n);
+            if(n==sizeof(FileHeaderReply))
+                loop->quit();
+        });
+        if(n != sizeof(FileHeaderReply))
+            loop->exec();
+        if(isFailed)
+            return;
+        //避免后续数据还会调用该函数
+        QObject::disconnect(conn);
+    }
+
     //send file
     qint64 rstSize,totalSize;
-    rstSize=totalSize=fileInfo.size();
+    rstSize=totalSize=fileInfo.size()-reply.begPos;
+    if(rstSize > 0){
+        //有数据需要发送
+        file.seek(reply.begPos);
+        //qDebug()<<fileInfo.fileName()<<"beg at "<<reply.begPos;
 
-    //先关联bytesWritten信号,避免数据发送完毕了还没有触发该信号
-    QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize,&connDis,&connErr](qint64 s){
-        rstSize -= s;
-        emit signalsSrc.process(totalSize-rstSize,totalSize);
-        if(rstSize<=0){
-            //避免在传输完成后收到错误提示
-            QObject::disconnect(connDis);
-            QObject::disconnect(connErr);
-            loop->quit();
-        }
-    });
+        //先关联bytesWritten信号,避免数据发送完毕了还没有触发该信号
+        QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize,&connDis,&connErr](qint64 s){
+            rstSize -= s;
+            emit signalsSrc.process(totalSize-rstSize,totalSize);
+            if(rstSize<=0){
+                //避免在传输完成后收到错误提示
+                QObject::disconnect(connDis);
+                QObject::disconnect(connErr);
+                loop->quit();
+            }
+        });
 
-    QTimer sendTimer;
-    QByteArray buffer;
-    QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop,&buffer](){
-        if(buffer.isEmpty())
-            buffer=file.read(dataBlockSize);
-        //qDebug()<<"before buffer size="<<buffer.size();
-        buffer = buffer.last(buffer.size()-socket.write(buffer));
-        //qDebug()<<"after buffer size="<<buffer.size();
-        if(file.atEnd()){
-            sendTimer.stop();
-        }
-    });
-    sendTimer.start(1);
+        QTimer sendTimer;
+        QByteArray buffer;
+        QObject::connect(&sendTimer,&QTimer::timeout,loop,[&socket,&file,&rstSize,&sendTimer,this,loop,&buffer](){
+            if(buffer.isEmpty())
+                buffer=file.read(dataBlockSize);
+            //qDebug()<<"before buffer size="<<buffer.size();
+            buffer = buffer.last(buffer.size()-socket.write(buffer));
+            //qDebug()<<"after buffer size="<<buffer.size();
+            if(file.atEnd()){
+                sendTimer.stop();
+            }
+        });
+        sendTimer.start(1);
 
-    //如果文件为空文件 则无需事件循环
-    loop->exec();
+        //等待数据发送完毕
+        loop->exec();
+        //到此为止,所有数据已经写入底层Tcp协议栈,但是可能还没有发送出去,这里需要等待对方在接受完成后主动关闭连接
+        // 有可能底层TCP传输失败,导致这里卡死?
+        //qDebug()<<"wait for client disconnect";
+        QObject::connect(&socket,&QTcpSocket::disconnected,loop,&QEventLoop::quit);
+        loop->exec();
+        if(isFailed)
+            return;
+    }else{
+        //没有数据需要发送,直接成功
+        QObject::disconnect(connDis);
+        QObject::disconnect(connErr);
+    }
 
-    if(isFailed)
-        return;
-
-    //qDebug()<<"wait for client disconnect";
-
-    //到此为止,所有数据已经写入底层Tcp协议栈,但是可能还没有发送出去,这里需要等待对方在接受完成后主动关闭连接
-    // 有可能底层TCP传输失败,导致这里卡死?
-    QObject::connect(&socket,&QTcpSocket::disconnected,loop,&QEventLoop::quit);
-    loop->exec();
-    if(isFailed)
-        return;
     loop->deleteLater();
     loop = nullptr;
 
@@ -359,8 +398,8 @@ void SendFileWorker::run()
 ///////////////RecvFileWorker/////////
 //////////////////////////////////////
 
-RecvFileWorker::RecvFileWorker(qintptr _socketDescriptor)
-    :socketDescriptor(_socketDescriptor)
+RecvFileWorker::RecvFileWorker(qintptr _socketDescriptor,QString _fileSavedPath)
+    :socketDescriptor(_socketDescriptor),fileSavedPath(_fileSavedPath)
 {
 
 }
@@ -384,7 +423,6 @@ void RecvFileWorker::run()
     //read header
     QEventLoop* loop=new QEventLoop();
     bool isFailed=false;
-    //在出现错误时,会发送两次taskOver信号
     auto connDis = QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop](){
         emit signalsSrc.taskOver(false,"对方中断传输!");
         //qDebug()<<"client disconnect!";
@@ -409,20 +447,24 @@ void RecvFileWorker::run()
         });
 
     FileHeader fHeader;
-    int n=0;
-    auto conn = QObject::connect(&socket,&QTcpSocket::readyRead,loop,[&fHeader,&n,loop,&socket](){
-         n += socket.read((char*)&fHeader+n,sizeof(FileHeader)-n);
-         if(n==sizeof(FileHeader))
-             loop->quit();
-    });
-    loop->exec();
-    if(isFailed)
-        return;
-    //避免后续数据还会调用该函数
-    QObject::disconnect(conn);
+    {
+        //read fHeader
+        int n=0;
+        auto conn = QObject::connect(&socket,&QTcpSocket::readyRead,loop,[&fHeader,&n,loop,&socket](){
+            n += socket.read((char*)&fHeader+n,sizeof(FileHeader)-n);
+            if(n==sizeof(FileHeader))
+                loop->quit();
+        });
+        loop->exec();
+        if(isFailed)
+            return;
+        //避免后续数据还会调用该函数
+        QObject::disconnect(conn);
+    }
 
     //告知主线程接受的文件名字与大小
     //主线程需要一定的时间处理该信号,否则可能会导致显示异常,因此需要休眠一段时间
+    //qDebug()<<"file hash = "<<fHeader.fileHash;
     emit signalsSrc.newFile(fHeader.releativeFileName,fHeader.fileSize);
     {
         // local tcnn
@@ -433,36 +475,67 @@ void RecvFileWorker::run()
         QObject::disconnect(tcnn);
     }
 
-    //qDebug()<<"header read success!";
-
-    qint64 rstSize=fHeader.fileSize;
-    qint64 totalSize=fHeader.fileSize;
+    //断点续传
+    //qDebug()<<"beg send reply";
+    qint64 rstSize;
+    qint64 totalSize;
     //open file,maybe need to create dir !
-    QFile file(fHeader.releativeFileName);
-    QFileInfo fileInfo(fHeader.releativeFileName);
+    QFile file;
+    QFileInfo fileInfo;
 
-    //mkdir if necessary
-    int index = file.fileName().lastIndexOf('/');
-    if(index!=-1){
-        QString dirPath;
-        dirPath=file.fileName().first(index);
-        //qDebug()<<"dirPath="<<dirPath;
-        QDir dir;
-        if(!dir.mkpath(dirPath)){
-            emit signalsSrc.taskOver(false,
-                                     QString("创建文件夹 %1 失败!").arg(dirPath));
-            return;
+    FileHeaderReply reply;
+    MySqlite3* db = MySqlite3::getInstance();
+    QString lastPath = db->getPathByHash(fHeader.fileHash);
+
+    if(!lastPath.isEmpty()){
+        qDebug()<<"lastPath="<<lastPath;
+        file.setFileName(lastPath);
+        if(file.open(QIODevice::Append)){
+            fileInfo.setFile(lastPath);
+            rstSize=totalSize=fHeader.fileSize-file.size();
+            qDebug()<<QString("文件:%1 续传成功,已有数据为%2MB").arg(fileInfo.fileName()).arg(file.size()/1024.0/1024.0);
+            reply.begPos=file.size();
         }
     }
-    //mkdir end
+    //如果数据库中不存在对应文件记录或者打开上次路径失败,则打开新文件
+    if(!file.isOpen()){
+        reply.begPos=0;
+        rstSize=totalSize=fHeader.fileSize;
+        QString filePath = fileSavedPath+"/"+fHeader.releativeFileName;
+        fileInfo.setFile(filePath);
+        file.setFileName(filePath);
+
+        {
+            //mkdir if necessary
+            //在对方传送文件夹时,relativeFileName可能包括文件夹路径,因此需要首先创建文件夹
+            QDir dir;
+            QString path = fileInfo.absolutePath();
+            if(!dir.mkpath(path)){
+                qDebug()<<"mkdir failed:"<<path;
+                emit signalsSrc.taskOver(false,
+                                         QString("创建文件夹 %1 失败!").arg(path));
+                return;
+            }
+            //qDebug()<<"mkdir success:"<<dirPath;
+            //mkdir end
+        }
+
+        if(!file.open(QIODevice::WriteOnly)){
+            qDebug()<<"open file failed!";
+            emit signalsSrc.taskOver(false,QString("打开文件 %1 失败!").arg(fileInfo.fileName()));
+            return;
+        }
+
+        qDebug()<<QString("update %1 by hash:").arg(fileInfo.fileName())<<db->updateByHash(fHeader.fileHash,fileInfo.absoluteFilePath());
+    }
+
+    //qDebug()<<"header read success!";
+    //send reply
+    qDebug()<<"reply begPos = "<<reply.begPos;
+    // 默认发送一次成功,后续改进
+    socket.write((char*)&reply,sizeof(reply));
 
     //qDebug()<<"recv file : fileName="<<fHeader.fileName<<" fileSize="<<fHeader.fileSize;
-
-    if(!file.open(QIODevice::WriteOnly)){
-        //qDebug()<<"open file failed!";
-        emit signalsSrc.taskOver(false,QString("打开文件 %1 失败!").arg(fileInfo.fileName()));
-        return;
-    }
 
     //recv file
     QObject::connect(&socket,&QTcpSocket::readyRead,loop,[&file,&rstSize,loop,&socket,this,totalSize,&connDis,&connErr](){
@@ -483,6 +556,7 @@ void RecvFileWorker::run()
         file.write(buffer);
     }
 
+    //如果没有数据需要发送,则直接成功,无需进行loop
     if(rstSize<=0)
     {
         QObject::disconnect(connDis);
@@ -497,6 +571,7 @@ void RecvFileWorker::run()
 
     //qDebug()<<"recv file success!";
     emit signalsSrc.taskOver(true,QString("文件 %1 接受成功!").arg(fileInfo.fileName()));
+    //db->deleteByHash(fHeader.fileHash);
     file.close();
     socket.close();
 }

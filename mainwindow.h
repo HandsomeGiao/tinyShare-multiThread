@@ -16,9 +16,16 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
+//发送方头部,包含文件名与文件大小
 struct FileHeader{
     char releativeFileName[1024];
     quint64 fileSize;
+    char fileHash[65];
+};
+
+//接收方回复:接收文件的起始位置与结束位置
+struct FileHeaderReply{
+    quint64 begPos;
 };
 
 class WorkerSignals : public QObject
@@ -56,7 +63,7 @@ private:
 class RecvFileWorker : public QRunnable
 {
 public:
-    RecvFileWorker(qintptr _socketDescriptor);
+    RecvFileWorker(qintptr _socketDescriptor,QString _fileSavedPath);
     ~RecvFileWorker();
     void run() override;
     WorkerSignals signalsSrc;
@@ -66,6 +73,8 @@ private:
 
     quint64 readBufferSize=100*1024*1024;
     quint64 dataBlockSize=65536;
+
+    QString fileSavedPath;
 };
 
 class MyTcpServer : public QTcpServer
