@@ -555,13 +555,15 @@ void RecvFileWorker::run()
         file.write(buffer);
     }
 
-    //如果没有数据需要发送,则直接成功,无需进行loop
+    //如果没有数据需要发送,则直接认为成功
     if(rstSize<=0)
     {
         QObject::disconnect(connDis);
         QObject::disconnect(connErr);
-    }else
-        loop->exec();
+        // 100ms后直接退出事件循环
+        QTimer::singleShot(100,loop,&QEventLoop::quit);
+    }
+    loop->exec();
 
     loop->deleteLater();
     loop = nullptr;
