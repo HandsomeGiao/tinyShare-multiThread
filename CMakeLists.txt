@@ -26,6 +26,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
         mysqlite3.h mysqlite3.cpp
+        userfinder.h userfinder.cpp
 
     )
 # Define target properties for Android with Qt 6 as:

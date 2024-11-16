@@ -16,6 +16,8 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
+class UserFinder;
+
 //发送方头部,包含文件名与文件大小
 struct FileHeader{
     char releativeFileName[1024];
@@ -99,29 +101,38 @@ public:
 private:
     void getAllFiles(QStringList& allFiles,QString dirPath);
     void sendFile(QString path,QString rootPath=QString());
+
+    bool isLocalIP(QString ip);
 private slots:
     void do_taskEnd(bool s,QString info);
     void do_newClient(qintptr socketDescriptor);
     void do_newFile(QString name,quint64 size);
+    void do_newUserInfo(QString ip,int port );
 
+    //auto generated slots ,dont change ui name!
     void on_pbListen_clicked();
     void on_pbSend_clicked();
-
     void on_pbSendDir_clicked();
-
     void on_pbClearCompleted_clicked();
-
     void on_pbCancelAll_clicked();
-
     void on_pbChooseDir_clicked();
+    void on_pbShowIP_clicked();
+    void on_leIPRcv_editingFinished();
+    void on_leListenPort_editingFinished();
+    void on_cbGoalIP_currentTextChanged(const QString &arg1);
 
 private:
     Ui::MainWindow *ui;
+
+    UserFinder* userFinder = nullptr;
 
     MyTcpServer* server=nullptr;
     //存储所有文件传输信息的布局
     QVBoxLayout* uncopmletedVL=nullptr;
     QVBoxLayout* completedVL=nullptr;
+
+    QString goalIP;
+    int goalPort;
 
     QString fileSavedPath;
 

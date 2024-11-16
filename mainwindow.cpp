@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
 #include "mysqlite3.h"
+#include "userfinder.h"
 
 #include<QDebug>
 #include<QThreadPool>
@@ -14,6 +15,7 @@
 #include<QGroupBox>
 #include <QProgressBar>
 #include<QCryptographicHash>
+#include<QNetworkInterface>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -39,6 +41,11 @@ MainWindow::MainWindow(QWidget *parent)
     gb->setLayout(uncopmletedVL);
     ui->saShowInfo->setWidget(gb);
     ui->saShowInfo->show();
+
+    //user finder
+    userFinder = new UserFinder();
+    QThreadPool::globalInstance()->start(userFinder);
+    connect(&(userFinder->m_signals),&UserFinderSingals::newUser,this,&MainWindow::do_newUserInfo);
 
     //completed info
     completedVL=new QVBoxLayout;
@@ -72,7 +79,7 @@ void MainWindow::sendFile(QString path,QString rootPath)
     //忽略空文件
     if(fileInfo.size()==0)
         return;
-    SendFileWorker* worker=new SendFileWorker(ui->leIP->text(),ui->lePort->text().toInt(),path,rootPath);
+    SendFileWorker* worker=new SendFileWorker(goalIP,goalPort,path,rootPath);
     //connect(&(worker->signalsSrc),&WorkerSignals::taskOver,this,&MainWindow::do_taskEnd);
 
     QHBoxLayout* hl=new QHBoxLayout();
@@ -115,6 +122,27 @@ void MainWindow::sendFile(QString path,QString rootPath)
 
     // start需要在最后使用,避免worker先执行完而信号没有连接上
     QThreadPool::globalInstance()->start(worker);
+}
+
+bool MainWindow::isLocalIP(QString ip)
+{
+    // 获取所有网络接口
+    QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+
+    // 遍历所有接口
+    for (const QNetworkInterface &interface : interfaces) {
+        // 获取接口的所有地址
+        QList<QNetworkAddressEntry> entries = interface.addressEntries();
+
+        // 遍历所有地址
+        for (const QNetworkAddressEntry &entry : entries) {
+            // 检查地址是否匹配
+            if (entry.ip().toString() == ip) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 void MainWindow::do_taskEnd(bool s,QString info)
@@ -177,6 +205,28 @@ void MainWindow::do_newFile(QString name, quint64 size)
     emit qobject_cast<WorkerSignals*>(sender())->taskContinue();
 }
 
+void MainWindow::do_newUserInfo(QString ip, int port)
+{
+    //192.168.0.1:9000 IPV6地址格式同IPV4
+    for(int i=0;i<ui->cbGoalIP->count();++i){
+        QString item = ui->cbGoalIP->itemText(i);
+        //qDebug()<<"item="<<item;
+        QString oldIP=item.first(item.lastIndexOf(':'));
+        //qDebug()<<"oldIP="<<oldIP<<" ip="<<ip;
+        int oldPort = item.last(item.size() - item.lastIndexOf(':')-1).toInt();
+        //qDebug()<<"oldPort="<<oldPort<<" port="<<port;
+        if(oldIP == ip){
+            if(oldPort != port)
+                ui->cbGoalIP->setItemText(i,ip+':'+QString::number(port));
+            return;
+        }
+    }
+    //没有找到相同IP
+    QString s = ip+':'+QString::number(port);
+    //qDebug()<<"s = "<<s;
+    ui->cbGoalIP->addItem(s);
+}
+
 void MainWindow::on_pbListen_clicked()
 {
     if(server->isListening())
@@ -205,10 +255,12 @@ void MainWindow::on_pbSend_clicked()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    if(QThreadPool::globalInstance()->activeThreadCount()){
+    if(QThreadPool::globalInstance()->activeThreadCount() > 1){
         event->ignore();
         QMessageBox::warning(this,"等待子线程","等待所有子线程完成!");
     }else{
+        emit userFinder->m_signals.endTask();
+        QThread::msleep(100);
         event->accept();
     }
 }
@@ -248,7 +300,7 @@ void SendFileWorker::run()
     //在出现错误时,会发送两次taskOver信号
     auto connDis = QObject::connect(&socket,&QTcpSocket::disconnected,loop,[this,&isFailed,loop,&fileInfo](){
         emit signalsSrc.taskOver(false,QString("在传输 %1 时断开连接!").arg(fileInfo.fileName()));
-        qDebug()<<"client disconnect!";
+        //qDebug()<<"client disconnect!";
         loop->quit();
         loop->deleteLater();
         isFailed=true;
@@ -257,7 +309,7 @@ void SendFileWorker::run()
         [this,&isFailed,loop,&fileInfo,&socket]()
         {
             emit signalsSrc.taskOver(false,QString("在传输 %1 时出现错误:%2").arg(fileInfo.fileName(),socket.errorString()));
-            qDebug()<<"error occurred:"+socket.errorString();
+            //qDebug()<<"error occurred:"+socket.errorString();
             isFailed=true;
             loop->quit();
             loop->deleteLater();
@@ -341,7 +393,7 @@ void SendFileWorker::run()
     if(rstSize > 0){
         //有数据需要发送
         file.seek(reply.begPos);
-        qDebug()<<fileInfo.fileName()<<"beg at "<<reply.begPos;
+        //qDebug()<<fileInfo.fileName()<<"beg at "<<reply.begPos;
 
         //先关联bytesWritten信号,避免数据发送完毕了还没有触发该信号
         QObject::connect(&socket,&QTcpSocket::bytesWritten,loop,[loop,&rstSize,this,totalSize,&connDis,&connErr](qint64 s){
@@ -484,15 +536,16 @@ void RecvFileWorker::run()
 
     FileHeaderReply reply;
     MySqlite3* db = MySqlite3::getInstance();
+    //如果数据库无法打开,这里重新传输整个文件
     QString lastPath = db->getPathByHash(fHeader.fileHash);
 
     if(!lastPath.isEmpty()){
-        qDebug()<<"lastPath="<<lastPath;
+        //qDebug()<<"lastPath="<<lastPath;
         file.setFileName(lastPath);
         if(file.open(QIODevice::Append)){
             fileInfo.setFile(lastPath);
             rstSize=totalSize=fHeader.fileSize-file.size();
-            qDebug()<<QString("文件:%1 续传成功,已有数据为%2MB").arg(fileInfo.fileName()).arg(file.size()/1024.0/1024.0);
+            //qDebug()<<QString("文件:%1 续传成功,已有数据为%2MB").arg(fileInfo.fileName()).arg(file.size()/1024.0/1024.0);
             reply.begPos=file.size();
         }
     }
@@ -510,7 +563,7 @@ void RecvFileWorker::run()
             QDir dir;
             QString path = fileInfo.absolutePath();
             if(!dir.mkpath(path)){
-                qDebug()<<"mkdir failed:"<<path;
+                //qDebug()<<"mkdir failed:"<<path;
                 emit signalsSrc.taskOver(false,
                                          QString("创建文件夹 %1 失败!").arg(path));
                 return;
@@ -520,17 +573,17 @@ void RecvFileWorker::run()
         }
 
         if(!file.open(QIODevice::WriteOnly)){
-            qDebug()<<"open file failed!";
+            //qDebug()<<"open file failed!";
             emit signalsSrc.taskOver(false,QString("打开文件 %1 失败!").arg(fileInfo.fileName()));
             return;
         }
 
-        qDebug()<<QString("update %1 by hash:").arg(fileInfo.fileName())<<db->updateByHash(fHeader.fileHash,fileInfo.absoluteFilePath());
+        //qDebug()<<QString("update %1 by hash:").arg(fileInfo.fileName())<<db->updateByHash(fHeader.fileHash,fileInfo.absoluteFilePath());
     }
 
     //qDebug()<<"header read success!";
     //send reply
-    qDebug()<<"reply begPos = "<<reply.begPos;
+    //qDebug()<<"reply begPos = "<<reply.begPos;
     // 默认发送一次成功,后续改进
     socket.write((char*)&reply,sizeof(reply));
 
@@ -654,5 +707,56 @@ void MainWindow::on_pbChooseDir_clicked()
     fileSavedPath = path;
     QDir::setCurrent(fileSavedPath);
     ui->leFileSavedDir->setText(fileSavedPath);
+}
+
+
+void MainWindow::on_pbShowIP_clicked()
+{
+    QString infostr;
+    auto interfaces = QNetworkInterface::allInterfaces();
+    for(auto& i:interfaces){
+        auto entries = i.addressEntries();
+        infostr+="interface name: ";
+        infostr+=i.humanReadableName();
+        for(auto& j:entries){
+            infostr+='\n';
+            infostr += "ip:";
+            infostr+=j.ip().toString();
+            infostr += " netmask:";
+            infostr+=j.netmask().toString();
+            //qDebug()<<"ip:"<<j.ip().toString()<<" netmask:"<<j.netmask().toString();
+        }
+        infostr+="\n----------------\n";
+    }
+    QMessageBox *msg = new QMessageBox(this);
+    msg->setText(infostr);
+    msg->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    msg->exec();
+    msg->deleteLater();
+}
+
+
+void MainWindow::on_leIPRcv_editingFinished()
+{
+    QString ip = ui->leIPRcv->text();
+    if(isLocalIP(ip)){
+        userFinder->changeIpv4(ui->leIPRcv->text());
+    }else{
+        QMessageBox::warning(this,"错误","请输入本机IP地址!");
+    }
+}
+
+
+void MainWindow::on_leListenPort_editingFinished()
+{
+    userFinder->changePort(ui->leListenPort->text().toInt());
+}
+
+
+void MainWindow::on_cbGoalIP_currentTextChanged(const QString &arg1)
+{
+    goalIP = arg1.first(arg1.lastIndexOf(':'));
+    goalPort = arg1.last(arg1.size()-arg1.lastIndexOf(':')-1).toInt();
+    //qDebug()<<"goalIP="<<goalIP<<" goalPort="<<goalPort;
 }
 

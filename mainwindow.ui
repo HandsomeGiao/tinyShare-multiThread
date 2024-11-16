@@ -18,52 +18,83 @@
     <item>
      <layout class="QVBoxLayout" name="verticalLayout_5">
       <item>
-       <layout class="QHBoxLayout" name="horizontalLayout">
+       <layout class="QHBoxLayout" name="horizontalLayout_6" stretch="1,0">
         <item>
-         <widget class="QLineEdit" name="leIP">
+         <widget class="QComboBox" name="cbGoalIP">
+          <property name="placeholderText">
+           <string>选择目的套接字</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayout_3">
+          <item>
+           <widget class="QPushButton" name="pbSend">
+            <property name="text">
+             <string>发送文件</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="pbSendDir">
+            <property name="text">
+             <string>发送文件夹</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="0,0,0,0">
+        <item>
+         <widget class="QLineEdit" name="leIPRcv">
+          <property name="placeholderText">
+           <string>请选择本机IP地址</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="leListenPort">
           <property name="inputMask">
            <string/>
           </property>
           <property name="text">
-           <string>127.0.0.1</string>
+           <string/>
           </property>
           <property name="placeholderText">
-           <string>目标IP地址</string>
+           <string>监听端口........</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QLineEdit" name="lePort">
+         <widget class="QPushButton" name="pbListen">
           <property name="text">
-           <string>8888</string>
+           <string>开启监听</string>
           </property>
-          <property name="placeholderText">
-           <string>目标端口</string>
+          <property name="iconSize">
+           <size>
+            <width>10</width>
+            <height>10</height>
+           </size>
+          </property>
+          <property name="flat">
+           <bool>false</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="pbShowIP">
+          <property name="text">
+           <string>显示本机IP</string>
           </property>
          </widget>
         </item>
        </layout>
       </item>
       <item>
-       <layout class="QHBoxLayout" name="horizontalLayout_3">
-        <item>
-         <widget class="QPushButton" name="pbSend">
-          <property name="text">
-           <string>发送文件</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="pbSendDir">
-          <property name="text">
-           <string>发送文件夹</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </item>
-      <item>
-       <layout class="QHBoxLayout" name="hLDirAndPort" stretch="5,0,1,0">
+       <layout class="QHBoxLayout" name="hLDirAndPort" stretch="5,0">
         <item>
          <widget class="QLineEdit" name="leFileSavedDir">
           <property name="readOnly">
@@ -78,32 +109,12 @@
           </property>
          </widget>
         </item>
-        <item>
-         <widget class="QLineEdit" name="leListenPort">
-          <property name="inputMask">
-           <string/>
-          </property>
-          <property name="text">
-           <string>8888</string>
-          </property>
-          <property name="placeholderText">
-           <string>监听端口........</string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QPushButton" name="pbListen">
-          <property name="text">
-           <string>开启监听</string>
-          </property>
-         </widget>
-        </item>
        </layout>
       </item>
       <item>
        <widget class="QTabWidget" name="tabWidget">
         <property name="currentIndex">
-         <number>0</number>
+         <number>1</number>
         </property>
         <widget class="QWidget" name="widget_2">
          <attribute name="title">
@@ -160,7 +171,7 @@
                  <x>0</x>
                  <y>0</y>
                  <width>629</width>
-                 <height>186</height>
+                 <height>180</height>
                 </rect>
                </property>
               </widget>
@@ -225,7 +236,7 @@
                  <x>0</x>
                  <y>0</y>
                  <width>629</width>
-                 <height>186</height>
+                 <height>180</height>
                 </rect>
                </property>
               </widget>
